@@ -1,8 +1,12 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { MessageParam } from "@anthropic-ai/sdk/resources";
 import * as readline from "node:readline/promises";
-import { callAnthropic, parseResponse } from "./models";
-import { blue } from "./colors";
+import { blue, red } from "./colors";
+import {
+  actionResponse,
+  callModel,
+  ModelMessageParam,
+  ModelResponse,
+} from "./models";
+import { CompletedAction, Tools, tools } from "./tools";
 
 async function askForInput(rl: readline.Interface) {
   return await rl.question(
@@ -10,16 +14,85 @@ async function askForInput(rl: readline.Interface) {
   );
 }
 
-function flattenMessages(messages: Anthropic.ContentBlock[]): string {
-  return messages
-    .map((message) => {
-      if (message.type === "text") {
-        return message.text;
-      } else if (message.type === "tool_use") {
-        return `Tool used: ${JSON.stringify(message.input)}`;
-      }
-    })
-    .join("\n");
+function flattenMessages(messages: ModelResponse): string {
+  const text = messages.text || "";
+  const tools = messages.tools.map((tool) => {
+    return `Tool used: ${tool.name}. Input: ${JSON.stringify(tool.input)}`;
+  });
+  return `${text}\n${tools.join("\n")}`;
+}
+
+async function actionInput(input: string, history: ModelMessageParam[] = []) {
+  let completedActions: CompletedAction[] = [];
+  try {
+    const messages = await callModel(input, history);
+    history = [
+      ...history,
+      { role: "user", content: input },
+      { role: "assistant", content: flattenMessages(messages) },
+    ];
+    completedActions = await actionResponse(messages);
+    if (completedActions.length > 0) {
+      console.log(
+        blue(
+          `Completed ${completedActions.length} action${
+            completedActions.length > 1 ? "s" : ""
+          }.`
+        )
+      );
+      history = [
+        ...history,
+        {
+          role: "user",
+          content: `Executing ${
+            completedActions.length
+          } tool actions. Tools: [${completedActions.map(
+            (action) => action?.tool
+          )}]`,
+        },
+        {
+          role: "assistant",
+          content: `Completed ${
+            completedActions.length
+          } tool actions. Results: ${JSON.stringify(completedActions)}`,
+        },
+      ];
+    }
+  } catch (error) {
+    console.error(red("An error occurred calling anthropic: "), error);
+  }
+  return { completedActions, history };
+}
+
+async function actionInternalInputCommands(
+  rl: readline.Interface,
+  input: string,
+  history: ModelMessageParam[]
+) {
+  let continueInput = false;
+  if (input.trim() === "") {
+    console.log(blue("Please enter a valid command"));
+    input = await askForInput(rl);
+    continueInput = true;
+  }
+  if (input === "history") {
+    console.log(history);
+    input = await askForInput(rl);
+    continueInput = true;
+  }
+  if (input === "clear") {
+    history = [];
+    console.log(blue("History cleared!"));
+    input = await askForInput(rl);
+    continueInput = true;
+  }
+  if (input === "tools") {
+    console.log(blue("Available tools:"));
+    console.log(blue(tools.map((tool) => tool.name).join(", ")));
+    input = await askForInput(rl);
+    continueInput = true;
+  }
+  return { input, history, continueInput };
 }
 
 async function main() {
@@ -29,32 +102,28 @@ async function main() {
     output: process.stdout,
   });
 
-  let history: MessageParam[] = [];
+  let history: ModelMessageParam[] = [];
   let input = await askForInput(rl);
 
   while (input !== "exit") {
-    if (input.trim() === "") {
-      console.log(blue("Please enter a valid command"));
-      input = await askForInput(rl);
+    const res = await actionInternalInputCommands(rl, input, history);
+    input = res.input;
+    history = res.history;
+    if (res.continueInput) {
       continue;
     }
-    if (input === "history") {
-      console.log(history);
-      input = await askForInput(rl);
+    let actions = await actionInput(input, history);
+    history = actions.history;
+    let continueAction = actions.completedActions.find(
+      (action) => action.tool === Tools.getToolResults
+    );
+    while (continueAction) {
+      console.log(blue(`Continuing with action: ${continueAction.result}`));
+      actions = await actionInput(continueAction.result, history);
+      continueAction = actions.completedActions.find(
+        (action) => action.tool === Tools.getToolResults
+      );
     }
-    if (input === "clear") {
-      history = [];
-      console.log(blue("History cleared!"));
-      input = await askForInput(rl);
-    }
-    const messages = await callAnthropic(input, history);
-    history = [
-      ...history,
-      { role: "user", content: input },
-      { role: "assistant", content: flattenMessages(messages) },
-    ];
-    parseResponse(messages);
-
     input = await askForInput(rl);
   }
 }
