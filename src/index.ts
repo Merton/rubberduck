@@ -1,8 +1,9 @@
 import * as readline from "node:readline/promises";
-import { blue, red } from "./colors";
+import { blue, green, red } from "./colors";
 import {
   actionResponse,
   callModel,
+  callSmallModel,
   ModelMessageParam,
   ModelResponse,
 } from "./models";
@@ -25,7 +26,11 @@ function flattenMessages(messages: ModelResponse): string {
 async function actionInput(input: string, history: ModelMessageParam[] = []) {
   let completedActions: CompletedAction[] = [];
   try {
+    // const enhancedResult = await callSmallModel(input);
+    // const enhancedInput = enhancedResult.text ?? input;
+    // console.log(green(enhancedInput));
     const messages = await callModel(input, history);
+    console.log(green(messages.text ?? ""));
     history = [
       ...history,
       { role: "user", content: input },
