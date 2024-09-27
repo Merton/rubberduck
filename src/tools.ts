@@ -1,7 +1,8 @@
 import { Tool } from "@anthropic-ai/sdk/resources";
 import fs from "fs";
 import { blue, green, red } from "./colors";
-import { ModelToolUseBlock } from "./models";
+import { ModelToolUseBlock } from "./model-utils";
+import dirTree from "directory-tree";
 
 export type CompletedAction = {
   id: string;
@@ -14,11 +15,12 @@ export enum Tools {
   saveToFile = "saveToFile",
   updateFile = "updateFile",
   createDirectory = "createDirectory",
-  listDirectory = "listDirectory",
   readFile = "readFile",
+  deleteFile = "deleteFile",
   mv = "mv",
   cp = "cp",
-  deleteFile = "deleteFile",
+  listDirectory = "listDirectory",
+  listProjectTree = "tree",
 }
 
 type ToolParams = {
@@ -49,6 +51,9 @@ type ToolParams = {
   };
   [Tools.deleteFile]: {
     filename: string;
+  };
+  [Tools.listProjectTree]: {
+    path: string;
   };
 };
 
@@ -195,6 +200,22 @@ export const tools: Tool[] = [
       required: ["filename"],
     },
   },
+  {
+    name: Tools.listProjectTree,
+    description:
+      "List the project tree. Use this to get an overview of the project structure",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          title: "path",
+          description: "The path to the root of the tree you wish to view",
+        },
+      },
+      required: ["path"],
+    },
+  },
 ];
 
 const toolFunctions = {
@@ -206,6 +227,7 @@ const toolFunctions = {
   [Tools.mv]: handleErrors(moveFile),
   [Tools.cp]: handleErrors(copyFile),
   [Tools.deleteFile]: handleErrors(deleteFile),
+  [Tools.listProjectTree]: handleErrors(listProjectTree),
 };
 
 // Error handling wrapper
@@ -332,4 +354,40 @@ export function deleteFile(params: ToolParams[Tools.deleteFile]) {
   console.log(blue(`\t Deleting file: ${filename}`));
   fs.unlinkSync(filename);
   return `Deleted file: ${filename}`;
+}
+
+export function listProjectTree(params: ToolParams[Tools.listProjectTree]) {
+  const { path } = params;
+  console.log(blue(`\t Listing project tree: ${path}`));
+
+  const ignoreDirs = /node_modules|dist|build|output|.git/;
+  const treeObj = dirTree(path, { exclude: ignoreDirs });
+
+  const stringTree = treeToString(treeObj);
+  return stringTree;
+}
+
+function treeToString(
+  node: any, // Change to 'any' for flexibility, since dirTree's type is uncertain
+  depth: number = 0,
+  isLast: boolean = true
+): string {
+  // Check if node is null or undefined
+  if (!node) {
+    return ""; // Return an empty string for null/undefined nodes
+  }
+
+  const indent =
+    depth > 0 ? "    ".repeat(depth - 1) + (isLast ? "└── " : "├── ") : "";
+  let result = indent + node.name + "\n";
+
+  // If the node has children, assume it's a directory
+  if (node.children && node.children.length > 0) {
+    node.children.forEach((child: any, index: number) => {
+      const isLastChild = index === node.children.length - 1;
+      result += treeToString(child, depth + 1, isLastChild);
+    });
+  }
+
+  return result;
 }
