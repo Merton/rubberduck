@@ -129,13 +129,9 @@ async function askForPrompt(history: ModelMessageParam[] = []) {
     });
 }
 
-program.version("1.0.0").description("RubberDuck CLI");
-
-program.action(async () => {
+export async function run() {
   await askForPrompt();
-});
-
-program.parse(process.argv);
+}
 
 // //     "Create me a game in html that resembles the classic game, Snake. Provide all the code needed in a single html file"
 // Create me a webpage all in one HTML file that mimics windows 95. Include javascript and functionality so that you can open the start menu, open apps in virtual "window"

@@ -2,9 +2,15 @@
   "name": "rubberduck",
   "version": "1.0.0",
   "description": "AI Coding assistant",
+  "main": "dist/index.js",
+  "bin": {
+    "rubberduck": "./dist/cli.js"
+  },
   "scripts": {
-    "dev": "ts-node-dev -r dotenv/config --exit-child src/index.ts",
-    "start": "ts-node -r dotenv/config src/index.ts"
+    "dev": "ts-node-dev -r dotenv/config --exit-child src/cli.ts",
+    "start": "ts-node -r dotenv/config src/cli.ts",
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
   },
   "author": "",
   "license": "ISC",
@@ -22,5 +28,10 @@
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "yocto-spinner": "^0.1.0"
+  },
+  "keywords": ["ai", "coding", "assistant", "cli"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/rubberduck.git"
   }
 }
