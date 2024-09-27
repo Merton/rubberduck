@@ -2,7 +2,6 @@
   "name": "rubberduck",
   "version": "1.0.0",
   "description": "AI Coding assistant",
-  "main": "index.js",
   "scripts": {
     "dev": "ts-node-dev -r dotenv/config --exit-child src/index.ts",
     "start": "ts-node -r dotenv/config src/index.ts"
@@ -17,9 +16,11 @@
     "@types/node": "^22.5.5",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
+    "inquirer": "^11.0.2",
     "openai": "^4.63.0",
     "picocolors": "^1.1.0",
     "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0"
+    "ts-node-dev": "^2.0.0",
+    "yocto-spinner": "^0.1.0"
   }
 }

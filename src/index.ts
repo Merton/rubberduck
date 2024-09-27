@@ -1,42 +1,30 @@
 import * as readline from "node:readline/promises";
 import { blue, green, red } from "./colors";
 import {
-  actionResponse,
+  actionTools,
   callModel,
-  callSmallModel,
   ModelMessageParam,
   ModelResponse,
 } from "./models";
 import { CompletedAction, Tools, tools } from "./tools";
+import inquirer from "inquirer";
+import { program } from "commander";
 
-async function askForInput(rl: readline.Interface) {
-  return await rl.question(
-    "What would you like to do? (Type 'exit' to quit)\n"
-  );
-}
-
-function flattenMessages(messages: ModelResponse): string {
-  const text = messages.text || "";
-  const tools = messages.tools.map((tool) => {
-    return `Tool used: ${tool.name}. Input: ${JSON.stringify(tool.input)}`;
-  });
-  return `${text}\n${tools.join("\n")}`;
-}
-
-async function actionInput(input: string, history: ModelMessageParam[] = []) {
+async function actionPrompt(
+  input: string,
+  history: ModelMessageParam[] = [],
+  toolResults?: CompletedAction[]
+) {
   let completedActions: CompletedAction[] = [];
   try {
-    // const enhancedResult = await callSmallModel(input);
-    // const enhancedInput = enhancedResult.text ?? input;
-    // console.log(green(enhancedInput));
-    const messages = await callModel(input, history);
-    console.log(green(messages.text ?? ""));
-    history = [
-      ...history,
-      { role: "user", content: input },
-      { role: "assistant", content: flattenMessages(messages) },
-    ];
-    completedActions = await actionResponse(messages);
+    const {
+      text,
+      history: updatedHistory,
+      tools,
+    } = await callModel(input, history, toolResults);
+    console.log(green(text ?? ""));
+
+    completedActions = await actionTools(tools);
     if (completedActions.length > 0) {
       console.log(
         blue(
@@ -45,97 +33,109 @@ async function actionInput(input: string, history: ModelMessageParam[] = []) {
           }.`
         )
       );
-      history = [
-        ...history,
-        {
-          role: "user",
-          content: `Executing ${
-            completedActions.length
-          } tool actions. Tools: [${completedActions.map(
-            (action) => action?.tool
-          )}]`,
-        },
-        {
-          role: "assistant",
-          content: `Completed ${
-            completedActions.length
-          } tool actions. Results: ${JSON.stringify(completedActions)}`,
-        },
-      ];
+      return actionPrompt("", updatedHistory, completedActions);
     }
+    return { completedActions, history: updatedHistory };
   } catch (error) {
     console.error(red("An error occurred calling anthropic: "), error);
   }
-  return { completedActions, history };
+  throw new Error("An error occurred calling");
 }
 
 async function actionInternalInputCommands(
-  rl: readline.Interface,
   input: string,
   history: ModelMessageParam[]
 ) {
-  let continueInput = false;
+  let askForInput = true;
   if (input.trim() === "") {
     console.log(blue("Please enter a valid command"));
-    input = await askForInput(rl);
-    continueInput = true;
-  }
-  if (input === "history") {
-    console.log(history);
-    input = await askForInput(rl);
-    continueInput = true;
-  }
-  if (input === "clear") {
+  } else if (input === "history") {
+    console.log(history ?? "No previous mentions");
+  } else if (input === "save") {
+    const { filename } = await inquirer.prompt([
+      {
+        type: "input",
+        name: "filename",
+        message: "Enter filename",
+      },
+    ]);
+    const saveHistory = JSON.stringify(history, null, 2);
+    await actionTools([
+      {
+        id: "save",
+        name: Tools.saveToFile,
+        input: {
+          filename: filename.trim() + ".json",
+          content: saveHistory,
+        },
+      },
+    ]);
+  } else if (input === "load") {
+    const { filename } = await inquirer.prompt([
+      {
+        type: "input",
+        name: "filename",
+        message: "Enter filename",
+      },
+    ]);
+    const results = await actionTools([
+      {
+        id: "load",
+        name: Tools.readFile,
+        input: {
+          filename: filename.trim() + ".json",
+        },
+      },
+    ]);
+    const parsedHistory = JSON.parse(results[0].result);
+    console.log(blue("Loaded history:"));
+    history = parsedHistory;
+  } else if (input === "clear") {
     history = [];
     console.log(blue("History cleared!"));
-    input = await askForInput(rl);
-    continueInput = true;
-  }
-  if (input === "tools") {
+  } else if (input === "tools") {
     console.log(blue("Available tools:"));
     console.log(blue(tools.map((tool) => tool.name).join(", ")));
-    input = await askForInput(rl);
-    continueInput = true;
+  } else {
+    askForInput = false;
   }
-  return { input, history, continueInput };
+  return { history, askForInput };
 }
 
-async function main() {
-  console.log(blue("Welcome to RubberDuck 🦆"));
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+async function askForPrompt(history: ModelMessageParam[] = []) {
+  inquirer
+    .prompt([
+      {
+        type: "input",
+        name: "prompt",
+        message: "What would you like to do? (Type 'exit' to quit)",
+      },
+    ])
+    .then(async (answers) => {
+      const input = answers.prompt;
+      const { history: updatedHistory, askForInput } =
+        await actionInternalInputCommands(input, history);
 
-  let history: ModelMessageParam[] = [];
-  let input = await askForInput(rl);
+      if (askForInput) {
+        return await askForPrompt(updatedHistory);
+      }
 
-  while (input !== "exit") {
-    const res = await actionInternalInputCommands(rl, input, history);
-    input = res.input;
-    history = res.history;
-    if (res.continueInput) {
-      continue;
-    }
-    let actions = await actionInput(input, history);
-    history = actions.history;
-    let continueAction = actions.completedActions.find(
-      (action) => action.tool === Tools.getToolResults
-    );
-    while (continueAction) {
-      console.log(blue(`Continuing with action: ${continueAction.result}`));
-      actions = await actionInput(continueAction.result, history);
-      continueAction = actions.completedActions.find(
-        (action) => action.tool === Tools.getToolResults
+      const { history: historyWithActions } = await actionPrompt(
+        input,
+        updatedHistory
       );
-    }
-    input = await askForInput(rl);
-  }
+
+      return await askForPrompt(historyWithActions);
+    });
 }
 
-main().then(() => {
-  console.log(blue("Good bye"));
+program.version("1.0.0").description("RubberDuck CLI");
+
+program.action(async () => {
+  await askForPrompt();
 });
+
+program.parse(process.argv);
 
 // //     "Create me a game in html that resembles the classic game, Snake. Provide all the code needed in a single html file"
 // Create me a webpage all in one HTML file that mimics windows 95. Include javascript and functionality so that you can open the start menu, open apps in virtual "window"

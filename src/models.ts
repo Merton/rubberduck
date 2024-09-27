@@ -1,42 +1,51 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { MessageParam } from "@anthropic-ai/sdk/resources";
+import {
+  ImageBlockParam,
+  MessageParam,
+  TextBlockParam,
+  ToolResultBlockParam,
+  ToolUseBlockParam,
+} from "@anthropic-ai/sdk/resources";
 import OpenAI from "openai";
 import { ChatCompletionMessageParam } from "openai/resources";
 import { blue, green } from "./colors";
-import { runTool, tools } from "./tools";
+import { CompletedAction, runTool, tools } from "./tools";
 
 const systemPrompt = (request: string) => `
-You are an AI coding assistant designed to help developers write code, create projects, and more. Your goal is to provide comprehensive assistance using the tools available to you.
+You are an advanced AI coding copilot with access to the file system through a set of provided tools. Your role is to assist programmers in creating projects quickly and efficiently. You must only communicate by using the function tools provided and NEVER respond with direct code.
 
-Here are the tools you have at your disposal:
-<tools>
-${tools.map((tool) => `<tool>${tool.name}</tool>`).join("\n")}
-</tools>
+Here are the tools available to you:
+<available_tools>
+${tools
+  .map(
+    (tool) =>
+      `<tool><name>${tool.name}</name><description>${
+        tool.description
+      }</description><input_schema>${JSON.stringify(
+        tool.input_schema
+      )}</input_schema></tool>`
+  )
+  .join("\n")}
+</available_tools>
 
-To use these tools, simply write the tool name followed by the necessary parameters in parentheses. For example: search_documentation("Python list comprehension")
+You will receive the result of the function call, which you can use to inform your next action or response.
 
-When creating code or projects:
-1. Plan out the structure and components needed
-2. Write clean, well-commented code
-3. Follow best practices and coding standards for the language or framework being used
-4. Consider error handling and edge cases
+Guidelines for interaction:
+1. Always use the provided tools to perform actions on the file system.
+2. Never write or suggest code directly in your responses.
+3. If you need more information to complete a task, use the appropriate tool to gather that information.
+4. If a requested action is not possible with the available tools, explain why and suggest an alternative approach if possible.
+5. Always think through your approach before making function calls.
 
-Here's how to handle the user's request:
-1. Carefully read and understand the user's request
-2. Break down complex tasks into smaller, manageable steps
-3. Use the provided tools as needed to gather information or perform actions. Respond with tool_use blocks to indicate tool usage
-4. Write code, explanations, or instructions as required
-5. If creating a project, provide a complete solution including necessary files and folder structure
 
-Provide your response in the following format:
+Begin by analyzing the request in a <thinking> block. Then, use the appropriate tools to complete the task. If multiple steps are required, explain each step before executing it.
+
+Format your final response like this:
 <response>
-[Your detailed response, including code snippets, explanations, and any necessary project structure]
+(Your explanation of what was done and any relevant information)
 </response>
 
-Please assist the developer with the following request:
-<user_request>
-${request}
-</user_request>
+Remember, your goal is to assist the programmer efficiently while only using the provided tools and never writing code directly in your responses.
 `;
 
 // Use the getToolResult tool to get the result of the previous step which will allow you to proceed to the next step.
@@ -60,7 +69,14 @@ const miniPrompt = `
 
 export type ModelMessageParam = {
   role: "user" | "assistant";
-  content: string;
+  content:
+    | string
+    | (
+        | ToolResultBlockParam
+        | TextBlockParam
+        | ImageBlockParam
+        | ToolUseBlockParam
+      )[];
 };
 
 export type ModelContentBlock = {
@@ -69,6 +85,7 @@ export type ModelContentBlock = {
 };
 
 export type ModelToolUseBlock = {
+  id: string;
   name: string;
   input: any;
 };
@@ -76,6 +93,7 @@ export type ModelToolUseBlock = {
 export type ModelBlock = ModelContentBlock | ModelToolUseBlock;
 export type ModelResponse = {
   text: string | null;
+  history?: ModelMessageParam[];
   tools: ModelToolUseBlock[];
 };
 
@@ -88,25 +106,29 @@ const provider: ModelProvider = ModelProvider.ANTHROPIC;
 
 export async function callModel(
   content: string,
-  history: ModelMessageParam[] = []
-) {
+  history: ModelMessageParam[] = [],
+  toolResults?: CompletedAction[]
+): Promise<ModelResponse> {
   switch (provider) {
     case ModelProvider.OPENAI:
-      return callOpenAI(content, history);
+      console.log("Not implemented");
+      break;
+    // return callOpenAI(content, history);
 
     case ModelProvider.ANTHROPIC:
-      return callAnthropic(content, history);
+      return callAnthropic(content, history, toolResults);
     default:
       throw new Error(`Invalid model provider: ${provider}`);
   }
+  throw new Error("Model provider not implemented");
 }
 
-export async function callSmallModel(
-  content: string,
-  history: ModelMessageParam[] = []
-) {
-  return callOpenAI(content, history, "gpt-4o-mini");
-}
+// export async function callSmallModel(
+//   content: string,
+//   history: ModelMessageParam[] = []
+// ) {
+//   return callOpenAI(content, history, "gpt-4o-mini");
+// }
 
 export async function callOpenAI(
   content: string,
@@ -144,6 +166,7 @@ export async function callOpenAI(
   const text = choice.message.content;
   const toolUses = (choice.message.tool_calls ?? []).map((tool) => {
     return {
+      id: tool.id,
       name: tool.function.name,
       input: JSON.parse(tool.function.arguments),
     };
@@ -154,17 +177,40 @@ export async function callOpenAI(
 
 export async function callAnthropic(
   content: string,
-  history: MessageParam[] = []
+  history: MessageParam[] = [],
+  toolResults: CompletedAction[] = []
 ): Promise<ModelResponse> {
   const anthropic = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
   });
 
+  const formattedToolResult: ToolResultBlockParam[] = toolResults?.map(
+    (tool) => {
+      return {
+        type: "tool_result",
+        tool_use_id: tool.id,
+        content: tool.result,
+        is_error: tool.isError,
+      };
+    }
+  );
+
+  if (!content && formattedToolResult && formattedToolResult.length > 0) {
+    console.log(green("Sending completed tool result to anthropic"));
+  }
+
+  const messageContent =
+    content !== "" && formattedToolResult ? content : formattedToolResult;
+
+  if (!content && !formattedToolResult) {
+    throw new Error("No content or tool results provided");
+  }
+
   const messages: Anthropic.Message = await anthropic.messages.create({
     model: "claude-3-5-sonnet-20240620",
     max_tokens: 8024,
-    // system: systemPrompt,
-    messages: [...history, { role: "user", content: systemPrompt(content) }],
+    system: systemPrompt(""),
+    messages: [...history, { role: "user", content: messageContent }],
     tools,
   });
 
@@ -175,15 +221,20 @@ export async function callAnthropic(
   const toolUses = messages.content.filter(
     (block) => block.type === "tool_use"
   );
-  return { text, tools: toolUses };
+
+  const updatedHistory = [
+    ...history,
+    { role: "user" as const, content: messageContent },
+    { role: "assistant" as const, content: messages.content },
+  ];
+  return { text, history: updatedHistory, tools: toolUses };
 }
 
-export async function actionResponse(messages: ModelResponse) {
+export async function actionTools(toolsUsed: ModelToolUseBlock[]) {
   // Parse the response from the Anthropic API and return the relevant information
   const completedActions = [];
-  console.log(green(messages.text ?? ""));
-  console.log(blue(`Used ${messages.tools.length} tools`));
-  for (const tool of messages.tools) {
+  console.log(blue(`Used ${toolsUsed.length} tools`));
+  for (const tool of toolsUsed) {
     const completedAction = await runTool(tool);
     completedActions.push(completedAction);
   }

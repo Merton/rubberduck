@@ -4,8 +4,10 @@ import { blue, green } from "./colors";
 import { ModelToolUseBlock } from "./models";
 
 export type CompletedAction = {
+  id: string;
   tool: string;
   result: string;
+  isError?: boolean;
 };
 
 export enum Tools {
@@ -14,7 +16,8 @@ export enum Tools {
   createDirectory = "createDirectory",
   listDirectory = "listDirectory",
   readFile = "readFile",
-  getToolResults = "getToolResults",
+  mv = "mv",
+  cp = "cp",
 }
 
 type ToolParams = {
@@ -35,7 +38,14 @@ type ToolParams = {
   [Tools.readFile]: {
     filename: string;
   };
-  [Tools.getToolResults]: {};
+  [Tools.mv]: {
+    source: string;
+    destination: string;
+  };
+  [Tools.cp]: {
+    source: string;
+    destination: string;
+  };
 };
 
 export const tools: Tool[] = [
@@ -127,13 +137,43 @@ export const tools: Tool[] = [
     },
   },
   {
-    name: Tools.getToolResults,
-    description:
-      "Immediately get the results of the tasks you requested and return to you the result. No input is required for this tool",
+    name: Tools.mv,
+    description: "Move a file or directory",
     input_schema: {
       type: "object",
-      properties: {},
-      required: [],
+      properties: {
+        source: {
+          type: "string",
+          title: "source",
+          description: "The source file or directory to move",
+        },
+        destination: {
+          type: "string",
+          title: "destination",
+          description: "The destination file or directory",
+        },
+      },
+      required: ["source", "destination"],
+    },
+  },
+  {
+    name: Tools.cp,
+    description: "Copy a file or directory",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: {
+          type: "string",
+          title: "source",
+          description: "The source file or directory to copy",
+        },
+        destination: {
+          type: "string",
+          title: "destination",
+          description: "The destination file or directory",
+        },
+      },
+      required: ["source", "destination"],
     },
   },
 ];
@@ -144,15 +184,26 @@ export async function runTool(
   const tool = message.name;
   console.log(blue(`🛠️ Tool: ${tool}`));
 
-  let actionResult: CompletedAction = { tool, result: "" };
+  let actionResult: CompletedAction = {
+    id: message.id,
+    tool,
+    result: "",
+    isError: false,
+  };
   switch (tool) {
     case Tools.saveToFile:
       const { filename, content } =
         message.input as ToolParams[Tools.saveToFile];
       if (!filename || !content) {
         console.error("Filename and content are required to save to a file");
+        actionResult = {
+          ...actionResult,
+          result: "Filename and content are required to save to a file",
+          isError: true,
+        };
+        break;
       }
-      actionResult = { tool, result: saveToFile(filename, content) };
+      actionResult = { ...actionResult, result: saveToFile(filename, content) };
       break;
 
     case Tools.updateFile:
@@ -160,9 +211,15 @@ export async function runTool(
         message.input as ToolParams[Tools.saveToFile];
       if (!updateFilename || !updateContent) {
         console.error("Filename and content are required to update a file");
+        actionResult = {
+          ...actionResult,
+          result: "Filename and content are required to update a file",
+          isError: true,
+        };
+        break;
       }
       actionResult = {
-        tool,
+        ...actionResult,
         result: updateFile(updateFilename, updateContent),
       };
       break;
@@ -171,8 +228,14 @@ export async function runTool(
       const { directory } = message.input as ToolParams[Tools.createDirectory];
       if (!directory) {
         console.error("Directory name is required to create a directory");
+        actionResult = {
+          ...actionResult,
+          result: "Directory name is required to create a directory",
+          isError: true,
+        };
+        break;
       }
-      actionResult = { tool, result: createDirectory(directory) };
+      actionResult = { ...actionResult, result: createDirectory(directory) };
       break;
 
     case Tools.listDirectory:
@@ -180,8 +243,17 @@ export async function runTool(
         message.input as ToolParams[Tools.listDirectory];
       if (!listDirectory) {
         console.error("Directory name is required to list directory");
+        actionResult = {
+          ...actionResult,
+          result: "Directory name is required to list directory",
+          isError: true,
+        };
+        break;
       }
-      actionResult = { tool, result: listDirectoryFiles(listDirectory) };
+      actionResult = {
+        ...actionResult,
+        result: listDirectoryFiles(listDirectory),
+      };
       break;
 
     case Tools.readFile:
@@ -189,14 +261,50 @@ export async function runTool(
         message.input as ToolParams[Tools.readFile];
       if (!readFilename) {
         console.error("Filename is required to read a file");
+        actionResult = {
+          ...actionResult,
+          result: "Filename is required to read a file",
+          isError: true,
+        };
       }
-      actionResult = { tool, result: readfile(readFilename) };
+      actionResult = { ...actionResult, result: readfile(readFilename) };
+      break;
+
+    case Tools.mv:
+      const { source, destination } = message.input as ToolParams[Tools.mv];
+      if (!source || !destination) {
+        console.error("Source and destination are required to move a file");
+        actionResult = {
+          ...actionResult,
+          result: "Source and destination are required to move a file",
+          isError: true,
+        };
+      }
+      actionResult = { ...actionResult, result: moveFile(source, destination) };
+      break;
+
+    case Tools.cp:
+      const { source: cpSource, destination: cpDestination } =
+        message.input as ToolParams[Tools.cp];
+      if (!cpSource || !cpDestination) {
+        console.error("Source and destination are required to copy a file");
+        actionResult = {
+          ...actionResult,
+          result: "Source and destination are required to copy a file",
+          isError: true,
+        };
+      }
+      actionResult = {
+        ...actionResult,
+        result: copyFile(cpSource, cpDestination),
+      };
       break;
 
     default:
       console.error(`Tool is not linked to an action: ${tool}`);
       actionResult = {
-        tool,
+        ...actionResult,
+        isError: true,
         result: `Tool is not linked to an action: ${tool}`,
       };
   }
@@ -244,4 +352,16 @@ function listDirectoryFiles(directory: string) {
 function readfile(filename: string): string {
   console.log(blue(`\t Reading file: ${filename}`));
   return fs.readFileSync(filename, "utf-8");
+}
+
+function moveFile(source: string, destination: string) {
+  console.log(blue(`\t Moving file: ${source} to ${destination}`));
+  fs.renameSync(source, destination);
+  return `Moved file: ${source} to ${destination}`;
+}
+
+function copyFile(source: string, destination: string) {
+  console.log(blue(`\t Copying file: ${source} to ${destination}`));
+  fs.copyFileSync(source, destination);
+  return `Copied file: ${source} to ${destination}`;
 }
