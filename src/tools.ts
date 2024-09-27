@@ -1,13 +1,13 @@
 import { Tool } from "@anthropic-ai/sdk/resources";
 import fs from "fs";
-import { blue, green } from "./colors";
+import { blue, green, red } from "./colors";
 import { ModelToolUseBlock } from "./models";
 
 export type CompletedAction = {
   id: string;
   tool: string;
   result: string;
-  isError?: boolean;
+  isError: boolean;
 };
 
 export enum Tools {
@@ -178,189 +178,127 @@ export const tools: Tool[] = [
   },
 ];
 
+const toolFunctions = {
+  [Tools.saveToFile]: handleErrors(saveToFile),
+  [Tools.updateFile]: handleErrors(updateFile),
+  [Tools.createDirectory]: handleErrors(createDirectory),
+  [Tools.listDirectory]: handleErrors(listDirectoryFiles),
+  [Tools.readFile]: handleErrors(readfile),
+  [Tools.mv]: handleErrors(moveFile),
+  [Tools.cp]: handleErrors(copyFile),
+};
+
+// Error handling wrapper
+function handleErrors(fn: (...args: any[]) => any) {
+  return (...args: any[]): { result: string; isError: boolean } => {
+    try {
+      const result = fn(...args);
+      return { result, isError: false };
+    } catch (error) {
+      // @ts-ignore
+      console.error(red(`Error: ${error.message}`));
+      // @ts-ignore
+      return { result: error.message, isError: true };
+    }
+  };
+}
+
 export async function runTool(
   message: ModelToolUseBlock
 ): Promise<CompletedAction> {
   const tool = message.name;
   console.log(blue(`🛠️ Tool: ${tool}`));
 
-  let actionResult: CompletedAction = {
+  const actionResult: CompletedAction = {
     id: message.id,
     tool,
     result: "",
     isError: false,
   };
-  switch (tool) {
-    case Tools.saveToFile:
-      const { filename, content } =
-        message.input as ToolParams[Tools.saveToFile];
-      if (!filename || !content) {
-        console.error("Filename and content are required to save to a file");
-        actionResult = {
-          ...actionResult,
-          result: "Filename and content are required to save to a file",
-          isError: true,
-        };
-        break;
-      }
-      actionResult = { ...actionResult, result: saveToFile(filename, content) };
-      break;
 
-    case Tools.updateFile:
-      const { filename: updateFilename, content: updateContent } =
-        message.input as ToolParams[Tools.saveToFile];
-      if (!updateFilename || !updateContent) {
-        console.error("Filename and content are required to update a file");
-        actionResult = {
-          ...actionResult,
-          result: "Filename and content are required to update a file",
-          isError: true,
-        };
-        break;
-      }
-      actionResult = {
-        ...actionResult,
-        result: updateFile(updateFilename, updateContent),
-      };
-      break;
-
-    case Tools.createDirectory:
-      const { directory } = message.input as ToolParams[Tools.createDirectory];
-      if (!directory) {
-        console.error("Directory name is required to create a directory");
-        actionResult = {
-          ...actionResult,
-          result: "Directory name is required to create a directory",
-          isError: true,
-        };
-        break;
-      }
-      actionResult = { ...actionResult, result: createDirectory(directory) };
-      break;
-
-    case Tools.listDirectory:
-      const { directory: listDirectory } =
-        message.input as ToolParams[Tools.listDirectory];
-      if (!listDirectory) {
-        console.error("Directory name is required to list directory");
-        actionResult = {
-          ...actionResult,
-          result: "Directory name is required to list directory",
-          isError: true,
-        };
-        break;
-      }
-      actionResult = {
-        ...actionResult,
-        result: listDirectoryFiles(listDirectory),
-      };
-      break;
-
-    case Tools.readFile:
-      const { filename: readFilename } =
-        message.input as ToolParams[Tools.readFile];
-      if (!readFilename) {
-        console.error("Filename is required to read a file");
-        actionResult = {
-          ...actionResult,
-          result: "Filename is required to read a file",
-          isError: true,
-        };
-      }
-      actionResult = { ...actionResult, result: readfile(readFilename) };
-      break;
-
-    case Tools.mv:
-      const { source, destination } = message.input as ToolParams[Tools.mv];
-      if (!source || !destination) {
-        console.error("Source and destination are required to move a file");
-        actionResult = {
-          ...actionResult,
-          result: "Source and destination are required to move a file",
-          isError: true,
-        };
-      }
-      actionResult = { ...actionResult, result: moveFile(source, destination) };
-      break;
-
-    case Tools.cp:
-      const { source: cpSource, destination: cpDestination } =
-        message.input as ToolParams[Tools.cp];
-      if (!cpSource || !cpDestination) {
-        console.error("Source and destination are required to copy a file");
-        actionResult = {
-          ...actionResult,
-          result: "Source and destination are required to copy a file",
-          isError: true,
-        };
-      }
-      actionResult = {
-        ...actionResult,
-        result: copyFile(cpSource, cpDestination),
-      };
-      break;
-
-    default:
-      console.error(`Tool is not linked to an action: ${tool}`);
-      actionResult = {
-        ...actionResult,
-        isError: true,
-        result: `Tool is not linked to an action: ${tool}`,
-      };
+  if (tool in toolFunctions) {
+    // @ts-ignore
+    const { result, isError } = toolFunctions[tool](message.input);
+    actionResult.result = result;
+    actionResult.isError = isError;
+  } else {
+    actionResult.result = `Tool is not linked to an action: ${tool}`;
+    actionResult.isError = true;
   }
 
-  console.log(green(`\t Result: ${actionResult.result}`));
+  console.log(
+    actionResult.isError
+      ? red(`\t Error: ${actionResult.result}`)
+      : green(`\t Result: ${actionResult.result}`)
+  );
   return actionResult;
 }
 
 // Tool functions
-function saveToFile(filename: string, text: string) {
+function saveToFile(params: ToolParams[Tools.saveToFile]) {
+  const { filename, content } = params;
+  if (!filename || !content) {
+    throw new Error("Filename and content are required to save to a file");
+  }
   console.log(blue(`\t Saving to file: ${filename}`));
-  fs.writeFileSync(filename, text);
+  fs.writeFileSync(filename, content);
   return `Saved to file: ${filename}`;
 }
 
-function updateFile(filename: string, text: string) {
+function updateFile(params: ToolParams[Tools.updateFile]) {
+  const { filename, content } = params;
+  if (!filename || !content) {
+    throw new Error("Filename and content are required to update a file");
+  }
   console.log(blue(`\t Updating file: ${filename}`));
-  saveToFile(filename, text);
+  fs.writeFileSync(filename, content);
   return `Updated file: ${filename}`;
 }
 
-function createDirectory(directory: string) {
+function createDirectory(params: ToolParams[Tools.createDirectory]) {
+  const { directory } = params;
+  if (!directory) {
+    throw new Error("Directory name is required to create a directory");
+  }
   console.log(blue(`\t Creating directory: ${directory}`));
-  try {
-    fs.mkdirSync(directory);
-    return `Created directory: ${directory}`;
-  } catch (error) {
-    console.error(error);
-    return `Error creating directory: ${directory}`;
-  }
+  fs.mkdirSync(directory);
+  return `Created directory: ${directory}`;
 }
 
-function listDirectoryFiles(directory: string) {
+function listDirectoryFiles(params: ToolParams[Tools.listDirectory]) {
+  const { directory } = params;
+  if (!directory) {
+    throw new Error("Directory name is required to list directory");
+  }
   console.log(blue(`\t Listing directory: ${directory}`));
-  try {
-    const files = fs.readdirSync(directory);
-    const filesString = files.map((res) => `- ${res}`).join("\n");
-    return filesString;
-  } catch (error) {
-    console.error(error);
-    return `Error listing directory: ${directory}`;
-  }
+  const files = fs.readdirSync(directory);
+  return files.map((res) => `- ${res}`).join("\n");
 }
 
-function readfile(filename: string): string {
+function readfile(params: ToolParams[Tools.readFile]) {
+  const { filename } = params;
+  if (!filename) {
+    throw new Error("Filename is required to read a file");
+  }
   console.log(blue(`\t Reading file: ${filename}`));
   return fs.readFileSync(filename, "utf-8");
 }
 
-function moveFile(source: string, destination: string) {
+function moveFile(params: ToolParams[Tools.mv]) {
+  const { source, destination } = params;
+  if (!source || !destination) {
+    throw new Error("Source and destination are required to move a file");
+  }
   console.log(blue(`\t Moving file: ${source} to ${destination}`));
   fs.renameSync(source, destination);
   return `Moved file: ${source} to ${destination}`;
 }
 
-function copyFile(source: string, destination: string) {
+function copyFile(params: ToolParams[Tools.cp]) {
+  const { source, destination } = params;
+  if (!source || !destination) {
+    throw new Error("Source and destination are required to copy a file");
+  }
   console.log(blue(`\t Copying file: ${source} to ${destination}`));
   fs.copyFileSync(source, destination);
   return `Copied file: ${source} to ${destination}`;
