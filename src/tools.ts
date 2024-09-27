@@ -18,6 +18,7 @@ export enum Tools {
   readFile = "readFile",
   mv = "mv",
   cp = "cp",
+  deleteFile = "deleteFile",
 }
 
 type ToolParams = {
@@ -45,6 +46,9 @@ type ToolParams = {
   [Tools.cp]: {
     source: string;
     destination: string;
+  };
+  [Tools.deleteFile]: {
+    filename: string;
   };
 };
 
@@ -176,6 +180,21 @@ export const tools: Tool[] = [
       required: ["source", "destination"],
     },
   },
+  {
+    name: Tools.deleteFile,
+    description: "Delete a file",
+    input_schema: {
+      type: "object",
+      properties: {
+        filename: {
+          type: "string",
+          title: "filename",
+          description: "The name of the file to delete",
+        },
+      },
+      required: ["filename"],
+    },
+  },
 ];
 
 const toolFunctions = {
@@ -186,6 +205,7 @@ const toolFunctions = {
   [Tools.readFile]: handleErrors(readfile),
   [Tools.mv]: handleErrors(moveFile),
   [Tools.cp]: handleErrors(copyFile),
+  [Tools.deleteFile]: handleErrors(deleteFile),
 };
 
 // Error handling wrapper
@@ -235,7 +255,7 @@ export async function runTool(
 }
 
 // Tool functions
-function saveToFile(params: ToolParams[Tools.saveToFile]) {
+export function saveToFile(params: ToolParams[Tools.saveToFile]) {
   const { filename, content } = params;
   if (!filename || !content) {
     throw new Error("Filename and content are required to save to a file");
@@ -245,7 +265,7 @@ function saveToFile(params: ToolParams[Tools.saveToFile]) {
   return `Saved to file: ${filename}`;
 }
 
-function updateFile(params: ToolParams[Tools.updateFile]) {
+export function updateFile(params: ToolParams[Tools.updateFile]) {
   const { filename, content } = params;
   if (!filename || !content) {
     throw new Error("Filename and content are required to update a file");
@@ -255,7 +275,7 @@ function updateFile(params: ToolParams[Tools.updateFile]) {
   return `Updated file: ${filename}`;
 }
 
-function createDirectory(params: ToolParams[Tools.createDirectory]) {
+export function createDirectory(params: ToolParams[Tools.createDirectory]) {
   const { directory } = params;
   if (!directory) {
     throw new Error("Directory name is required to create a directory");
@@ -265,7 +285,7 @@ function createDirectory(params: ToolParams[Tools.createDirectory]) {
   return `Created directory: ${directory}`;
 }
 
-function listDirectoryFiles(params: ToolParams[Tools.listDirectory]) {
+export function listDirectoryFiles(params: ToolParams[Tools.listDirectory]) {
   const { directory } = params;
   if (!directory) {
     throw new Error("Directory name is required to list directory");
@@ -275,7 +295,7 @@ function listDirectoryFiles(params: ToolParams[Tools.listDirectory]) {
   return files.map((res) => `- ${res}`).join("\n");
 }
 
-function readfile(params: ToolParams[Tools.readFile]) {
+export function readfile(params: ToolParams[Tools.readFile]) {
   const { filename } = params;
   if (!filename) {
     throw new Error("Filename is required to read a file");
@@ -284,7 +304,7 @@ function readfile(params: ToolParams[Tools.readFile]) {
   return fs.readFileSync(filename, "utf-8");
 }
 
-function moveFile(params: ToolParams[Tools.mv]) {
+export function moveFile(params: ToolParams[Tools.mv]) {
   const { source, destination } = params;
   if (!source || !destination) {
     throw new Error("Source and destination are required to move a file");
@@ -294,7 +314,7 @@ function moveFile(params: ToolParams[Tools.mv]) {
   return `Moved file: ${source} to ${destination}`;
 }
 
-function copyFile(params: ToolParams[Tools.cp]) {
+export function copyFile(params: ToolParams[Tools.cp]) {
   const { source, destination } = params;
   if (!source || !destination) {
     throw new Error("Source and destination are required to copy a file");
@@ -302,4 +322,14 @@ function copyFile(params: ToolParams[Tools.cp]) {
   console.log(blue(`\t Copying file: ${source} to ${destination}`));
   fs.copyFileSync(source, destination);
   return `Copied file: ${source} to ${destination}`;
+}
+
+export function deleteFile(params: ToolParams[Tools.deleteFile]) {
+  const { filename } = params;
+  if (!filename) {
+    throw new Error("Filename is required to delete a file");
+  }
+  console.log(blue(`\t Deleting file: ${filename}`));
+  fs.unlinkSync(filename);
+  return `Deleted file: ${filename}`;
 }
